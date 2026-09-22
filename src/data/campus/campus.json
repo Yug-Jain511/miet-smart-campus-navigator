@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "campus": {
+    "id": "miet",
+    "name": "MIET",
+    "map": { "type": "plane", "width": 1000, "height": 1000 }
+  },
+  "locations": [
+    {
+      "id": "MAIN_GATE",
+      "name": "Main Gate",
+      "category": "Entrance",
+      "description": "Main entrance of the MIET campus. Start here after scanning the gate QR.",
+      "type": "entrance",
+      "mapX": 100,
+      "mapY": 500,
+      "qrCodeId": "QR_MAIN_GATE",
+      "color": "#16a34a",
+      "icon": "gate",
+      "aliases": ["main gate", "gate", "entrance", "entry", "main entrance"]
+    },
+    {
+      "id": "LIBRARY",
+      "name": "Library",
+      "category": "Academic",
+      "description": "A campus library location.",
+      "type": "building",
+      "mapX": 500,
+      "mapY": 180,
+      "qrCodeId": "QR_LIBRARY",
+      "color": "#2563eb",
+      "icon": "library",
+      "aliases": ["library", "lib", "libr", "central library", "books", "reading room"]
+    },
+    {
+      "id": "ADMIN_BLOCK",
+      "name": "Admin Block",
+      "category": "Administration",
+      "description": "Administrative offices and student services.",
+      "type": "building",
+      "mapX": 880,
+      "mapY": 500,
+      "qrCodeId": "QR_ADMIN_BLOCK",
+      "color": "#d97706",
+      "icon": "building",
+      "aliases": ["admin", "admn", "admin block", "administration", "office", "admin office"]
+    }
+  ],
+  "nodes": [
+    { "id": "NODE_GATE", "locationId": "MAIN_GATE", "x": 100, "y": 500, "label": "Gate junction" },
+    { "id": "NODE_LIBRARY", "locationId": "LIBRARY", "x": 500, "y": 180, "label": "Library front" },
+    { "id": "NODE_ADMIN", "locationId": "ADMIN_BLOCK", "x": 880, "y": 500, "label": "Admin front" }
+  ],
+  "edges": [
+    { "id": "EDGE_GATE_LIBRARY", "from": "NODE_GATE", "to": "NODE_LIBRARY", "distanceMeters": 180, "accessible": true, "blocked": false },
+    { "id": "EDGE_GATE_ADMIN", "from": "NODE_GATE", "to": "NODE_ADMIN", "distanceMeters": 220, "accessible": true, "blocked": false },
+    { "id": "EDGE_LIBRARY_ADMIN", "from": "NODE_LIBRARY", "to": "NODE_ADMIN", "distanceMeters": 150, "accessible": true, "blocked": false }
+  ],
+  "qrCodes": [
+    { "id": "QR_MAIN_GATE", "locationId": "MAIN_GATE", "label": "Main Gate QR", "active": true },
+    { "id": "QR_LIBRARY", "locationId": "LIBRARY", "label": "Library QR", "active": true },
+    { "id": "QR_ADMIN_BLOCK", "locationId": "ADMIN_BLOCK", "label": "Admin Block QR", "active": true }
+  ],
+  "features": [
+    {
+      "id": "FEAT_LAWN",
+      "kind": "lawn",
+      "label": "Central lawn (demo shape)",
+      "points": [
+        { "x": 220, "y": 640 },
+        { "x": 780, "y": 640 },
+        { "x": 780, "y": 360 },
+        { "x": 220, "y": 360 }
+      ],
+      "color": "#bbdfb2",
+      "fill": "#d9efcf"
+    },
+    {
+      "id": "FEAT_LIB_BUILDING",
+      "kind": "building",
+      "label": "Library building (demo shape)",
+      "points": [
+        { "x": 430, "y": 800 },
+        { "x": 570, "y": 800 },
+        { "x": 570, "y": 880 },
+        { "x": 430, "y": 880 }
+      ],
+      "color": "#1e40af",
+      "fill": "#dbeafe"
+    },
+    {
+      "id": "FEAT_ADMIN_BUILDING",
+      "kind": "building",
+      "label": "Admin Block (demo shape)",
+      "points": [
+        { "x": 810, "y": 420 },
+        { "x": 950, "y": 420 },
+        { "x": 950, "y": 580 },
+        { "x": 810, "y": 580 }
+      ],
+      "color": "#92400e",
+      "fill": "#fef3c7"
+    },
+    {
+      "id": "FEAT_GATE_BUILDING",
+      "kind": "building",
+      "label": "Main Gate (demo shape)",
+      "points": [
+        { "x": 40, "y": 420 },
+        { "x": 160, "y": 420 },
+        { "x": 160, "y": 580 },
+        { "x": 40, "y": 580 }
+      ],
+      "color": "#166534",
+      "fill": "#dcfce7"
+    },
+    { "id": "TREE_1", "kind": "tree", "x": 300, "y": 420, "radius": 22 },
+    { "id": "TREE_2", "kind": "tree", "x": 700, "y": 420, "radius": 22 },
+    { "id": "TREE_3", "kind": "tree", "x": 350, "y": 600, "radius": 22 },
+    { "id": "TREE_4", "kind": "tree", "x": 650, "y": 600, "radius": 22 }
+  ],
+  "calibration": { "points": [] },
+  "settings": { "maxSnapMeters": 25, "poorAccuracyMeters": 25, "offRouteMeters": 25 },
+  "version": "demo-1",
+  "updatedAt": "2026-01-01T00:00:00.000Z"
+}

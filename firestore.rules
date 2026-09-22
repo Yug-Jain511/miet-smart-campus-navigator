@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public read for student-facing navigation data.
+    match /locations/{doc} { allow read: if true; allow write: if false; }
+    match /navigationNodes/{doc} { allow read: if true; allow write: if false; }
+    match /navigationEdges/{doc} { allow read: if true; allow write: if false; }
+    match /qrCodes/{doc} { allow read: if true; allow write: if false; }
+    match /settings/{doc} { allow read: if true; allow write: if false; }
+
+    // Admin writes require an authenticated admin custom claim.
+    // (Kept restrictive by default; wire your admin auth before opening writes.)
+    match /{document=**} {
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+  }
+}

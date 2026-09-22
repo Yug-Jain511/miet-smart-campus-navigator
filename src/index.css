@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* MIET design tokens — one visual system for the whole app. */
+:root {
+  --miet-red: #e22126;
+  --miet-red-dark: #b3121a;
+  --miet-red-ink: #9e0f16;
+  --miet-ink: #35363b;
+  --miet-ink-deep: #16181d;
+  --miet-paper: #f6f5f1;
+  --miet-route: #1668dc;
+  --miet-hairline: rgba(22, 24, 29, 0.1);
+}
+
+body {
+  background: var(--miet-paper);
+  color: var(--miet-ink-deep);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Leaflet map fixes for Vite + clean campus look */
+.leaflet-container {
+  font-family: inherit;
+  outline: none;
+  background: #edf1e6;
+}
+.leaflet-container:focus-visible {
+  outline: 2px solid var(--miet-red-dark);
+  outline-offset: 2px;
+}
+.miet-marker {
+  background: transparent;
+  border: none;
+}
+
+/* Route draw-in: smooth 450ms reveal, motion-safe. */
+.miet-route-line {
+  stroke-dasharray: 1200;
+  stroke-dashoffset: 1200;
+  animation: miet-route-draw 0.45s ease-out forwards;
+}
+@keyframes miet-route-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Marker select pulse — restrained, single cycle. */
+.miet-pin-selected {
+  animation: miet-pin-pop 0.25s ease-out;
+  transform-origin: bottom center;
+}
+@keyframes miet-pin-pop {
+  0% {
+    transform: scale(0.85);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Ambient campus backdrop: faint grid drift + node dots (GPU: transform/opacity only). */
+.miet-backdrop-grid {
+  background-image:
+    linear-gradient(rgba(22, 24, 29, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22, 24, 29, 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+  animation: miet-grid-drift 60s linear infinite;
+}
+@keyframes miet-grid-drift {
+  to {
+    transform: translate(44px, 22px);
+  }
+}
+.miet-node-dot {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: rgba(22, 24, 29, 0.16);
+  animation: miet-dot-breathe 7s ease-in-out infinite;
+}
+@keyframes miet-dot-breathe {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+/* Visible focus for keyboard users */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--miet-red-dark);
+  outline-offset: 2px;
+}
+
+/* QR print sheets: map chrome off, QR card only */
+@media print {
+  header,
+  footer,
+  nav {
+    display: none !important;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+}
+
+/* Respect reduced motion everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  .miet-backdrop-grid,
+  .miet-node-dot,
+  .miet-route-line,
+  .miet-pin-selected {
+    animation: none !important;
+  }
+  .miet-route-line {
+    stroke-dashoffset: 0;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -45,6 +45,8 @@ export type CampusSettings = {
   maxSnapMeters: number;
   poorAccuracyMeters: number;
   offRouteMeters: number;
+  /** Haversine radius for anchoring GPS to verified-gps locations. */
+  gateProximityMeters: number;
 };
 
 export type CampusDataset = {

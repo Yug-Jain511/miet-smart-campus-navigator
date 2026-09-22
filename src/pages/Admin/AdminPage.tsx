@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Ban, CheckCircle2, Download, FlaskConical, QrCode, RotateCcw } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ImportTab } from '../../components/admin/ImportTab';
+import { LiveRouteDebug } from '../../components/admin/LiveRouteDebug';
 import { CampusMap } from '../../components/map/CampusMap';
 import { QRGenerator } from '../../components/qr/QRGenerator';
 import { Button } from '../../components/ui/Button';
@@ -298,6 +299,7 @@ export function AdminPage() {
                 <p><strong>No route.</strong> All paths are blocked — unblock an edge to restore routing.</p>
               )}
             </div>
+            <LiveRouteDebug />
           </div>
         </div>
       ) : null}

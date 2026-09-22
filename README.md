@@ -3,15 +3,34 @@
 > Google Maps gets you to MIET. MIET Smart Campus Navigator helps you find your way once you're inside MIET.
 
 A web-based campus walking-navigation MVP for MIET (Meerut Institute of Engineering & Technology).
-Student scans a QR at the Main Gate → app sets **Current Location = Main Gate** → student picks
-**Library** or **Admin Block** → app calculates the shortest walking route with Dijkstra, draws it on a
-campus-specific map, and shows distance, walking time and step-by-step directions.
+Student opens the app → picks **Library** or **Admin Block** → the app resolves the
+current location automatically (QR, GPS anchor, or manual fallback) → calculates the
+shortest walking route with Dijkstra, draws it on a campus-specific map, and shows
+distance, walking time and step-by-step directions.
 
 ## DEMO DATA — Replace with actual MIET survey data
 
-All coordinates (`mapX/mapY` on a 0–1000 `CRS.Simple` plane), distances, pathways and graph
-relationships are **fictional placeholders**. No real MIET geography is claimed.
-Demo data lives in one place: `src/data/demoCampus/` (`locations.ts`, `nodes.ts`, `edges.ts`, `aliases.ts`).
+Map positions (`mapX/mapY` on a 0–1000 `CRS.Simple` plane), distances, pathways and graph
+relationships are **fictional placeholders**, EXCEPT the three verified GPS anchors below.
+Demo data lives in `src/data/demoCampus/` (`locations.ts`, `nodes.ts`, `edges.ts`, `aliases.ts`)
+and the canonical operator copy in `src/data/campus/campus.json`.
+
+### Verified GPS anchors (REAL reference data)
+
+| Location | Latitude | Longitude | Source |
+|---|---|---|---|
+| MAIN_GATE | 28.972317820229662 | 77.64158190939098 | verified GPS + Street View ref |
+| LIBRARY | 28.972946691259995 | 77.64081479761072 | verified GPS |
+| ADMIN_BLOCK | 28.972574766129807 | 77.64114336820761 | verified GPS |
+
+These are reference anchors for GPS proximity only (30 m match radius, real
+browser accuracy always shown). They are NOT map calibration: the campus is not
+GPS-calibrated, and route distances come from the navigation graph, never from
+straight-line GPS distances. The temporary junction walkway network
+(`JUNCTION_01/02/03`) is DEMO geometry until the walking survey is imported.
+Reference: `public/miet-path-plan.png` (annotated site plan — relative layout
+only; no coordinates were digitized from pixels, and walkway distances remain
+fictional demo values).
 
 ## Features
 
@@ -40,8 +59,8 @@ Demo data lives in one place: `src/data/demoCampus/` (`locations.ts`, `nodes.ts`
 - Route weights ready: distance + accessibility penalty + blocked (congestion
   reserved at 0); single route in UI
 - MIET branding: official logo in header, Home, QR cards, favicon
-- 49-test suite (routing, weights, search, QR, calibration, snapping, GPS
-  resolution, off-route, recalculation, validation, import, walking time)
+- 55-test suite (routing, weights, search, QR, calibration, snapping, GPS
+  resolution incl. verified anchors, off-route, recalculation, validation, import, walking time)
 
 ### Earlier MVP (preserved)
 
@@ -63,6 +82,23 @@ Demo data lives in one place: `src/data/demoCampus/` (`locations.ts`, `nodes.ts`
 - 360° panorama navigation (`PanoramaPoint` type exists, kept separate — no pipeline)
 - Voice navigation, crowd prediction, ML route optimization
 - Indoor floor navigation, full-campus expansion
+
+### Replacing the demo walkways with a real surveyed track (GPX workflow)
+
+When the walking survey arrives (e.g. a Strava/GPX recording), no UI or engine
+rewrite is needed. Conversion contract:
+
+1. Sample the GPX track into ordered trackpoints.
+2. Convert each trackpoint to campus-plane coordinates (requires the real
+   calibration this project does not yet have — do NOT reuse the demo plane).
+3. Simplify (e.g. Douglas–Peucker) into walkway nodes; measure leg distances.
+4. Emit `nodes.csv` (`id,locationId,mapX,mapY,label`) + `edges.csv`
+   (`from,to,distanceMeters,accessible,blocked`) — first/last nodes link the
+   existing `NODE_GATE` / `NODE_LIBRARY` / `NODE_ADMIN` location nodes or
+   replace them.
+5. Admin → Import Data → Validate (duplicate IDs, broken refs, disconnected
+   graph are all checked) → Preview → Publish. The app picks up the new
+   network immediately, including Dijkstra, snapping, off-route and Admin tools.
 
 ## Installation
 

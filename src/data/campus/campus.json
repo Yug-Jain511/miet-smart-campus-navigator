@@ -14,6 +14,10 @@
       "type": "entrance",
       "mapX": 100,
       "mapY": 500,
+      "latitude": 28.972317820229662,
+      "longitude": 77.64158190939098,
+      "coordinateSource": "verified-gps",
+      "streetViewReferenceId": "Ye1A2rb7aAF2KGpW_77PXg",
       "qrCodeId": "QR_MAIN_GATE",
       "color": "#16a34a",
       "icon": "gate",
@@ -27,6 +31,9 @@
       "type": "building",
       "mapX": 500,
       "mapY": 180,
+      "latitude": 28.972946691259995,
+      "longitude": 77.64081479761072,
+      "coordinateSource": "verified-gps",
       "qrCodeId": "QR_LIBRARY",
       "color": "#2563eb",
       "icon": "library",
@@ -40,6 +47,9 @@
       "type": "building",
       "mapX": 880,
       "mapY": 500,
+      "latitude": 28.972574766129807,
+      "longitude": 77.64114336820761,
+      "coordinateSource": "verified-gps",
       "qrCodeId": "QR_ADMIN_BLOCK",
       "color": "#d97706",
       "icon": "building",
@@ -48,13 +58,19 @@
   ],
   "nodes": [
     { "id": "NODE_GATE", "locationId": "MAIN_GATE", "x": 100, "y": 500, "label": "Gate junction" },
+    { "id": "JUNCTION_01", "x": 300, "y": 470, "label": "Demo walkway junction 01" },
+    { "id": "JUNCTION_02", "x": 420, "y": 300, "label": "Demo walkway junction 02" },
+    { "id": "JUNCTION_03", "x": 640, "y": 470, "label": "Demo walkway junction 03" },
     { "id": "NODE_LIBRARY", "locationId": "LIBRARY", "x": 500, "y": 180, "label": "Library front" },
     { "id": "NODE_ADMIN", "locationId": "ADMIN_BLOCK", "x": 880, "y": 500, "label": "Admin front" }
   ],
   "edges": [
-    { "id": "EDGE_GATE_LIBRARY", "from": "NODE_GATE", "to": "NODE_LIBRARY", "distanceMeters": 180, "accessible": true, "blocked": false },
-    { "id": "EDGE_GATE_ADMIN", "from": "NODE_GATE", "to": "NODE_ADMIN", "distanceMeters": 220, "accessible": true, "blocked": false },
-    { "id": "EDGE_LIBRARY_ADMIN", "from": "NODE_LIBRARY", "to": "NODE_ADMIN", "distanceMeters": 150, "accessible": true, "blocked": false }
+    { "id": "EDGE_GATE_J1", "from": "NODE_GATE", "to": "JUNCTION_01", "distanceMeters": 90, "accessible": true, "blocked": false },
+    { "id": "EDGE_J1_J2", "from": "JUNCTION_01", "to": "JUNCTION_02", "distanceMeters": 110, "accessible": true, "blocked": false },
+    { "id": "EDGE_J2_LIBRARY", "from": "JUNCTION_02", "to": "NODE_LIBRARY", "distanceMeters": 100, "accessible": true, "blocked": false },
+    { "id": "EDGE_J1_J3", "from": "JUNCTION_01", "to": "JUNCTION_03", "distanceMeters": 130, "accessible": true, "blocked": false },
+    { "id": "EDGE_J3_ADMIN", "from": "JUNCTION_03", "to": "NODE_ADMIN", "distanceMeters": 120, "accessible": true, "blocked": false },
+    { "id": "EDGE_J2_J3", "from": "JUNCTION_02", "to": "JUNCTION_03", "distanceMeters": 140, "accessible": true, "blocked": false }
   ],
   "qrCodes": [
     { "id": "QR_MAIN_GATE", "locationId": "MAIN_GATE", "label": "Main Gate QR", "active": true },
@@ -120,7 +136,7 @@
     { "id": "TREE_4", "kind": "tree", "x": 650, "y": 600, "radius": 22 }
   ],
   "calibration": { "points": [] },
-  "settings": { "maxSnapMeters": 25, "poorAccuracyMeters": 25, "offRouteMeters": 25 },
+  "settings": { "maxSnapMeters": 25, "poorAccuracyMeters": 25, "offRouteMeters": 25, "gateProximityMeters": 30 },
   "version": "demo-1",
   "updatedAt": "2026-01-01T00:00:00.000Z"
 }

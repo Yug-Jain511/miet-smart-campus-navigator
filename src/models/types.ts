@@ -14,6 +14,14 @@ export type CampusLocation = {
   mapY?: number;
   latitude?: number;
   longitude?: number;
+  /**
+   * Provenance of lat/lng. 'verified-gps' = real surveyed/reference coordinate
+   * (today: MAIN_GATE only). 'demo' = fictional or absent. GPS proximity may
+   * only anchor to 'verified-gps' coordinates — never fabricate the rest.
+   */
+  coordinateSource?: 'verified-gps' | 'demo';
+  /** Optional external reference (e.g. Street View / Maps id). Metadata only. */
+  streetViewReferenceId?: string;
   floor?: string;
   qrCodeId?: string;
   /** Marker color (hex). Defaults apply when absent. */

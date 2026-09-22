@@ -24,6 +24,8 @@ describe('live navigation primitives', () => {
     const route = findRoute('NODE_GATE', 'NODE_LIBRARY', graph)!;
     expect(routePolyline(route, graph)).toEqual([
       { x: 100, y: 500 },
+      { x: 300, y: 470 },
+      { x: 420, y: 300 },
       { x: 500, y: 180 },
     ]);
   });
@@ -31,7 +33,7 @@ describe('live navigation primitives', () => {
   it('on-route positions are not off-route; far positions are', () => {
     const graph = getDemoGraph();
     const route = findRoute('NODE_GATE', 'NODE_LIBRARY', graph)!;
-    expect(isOffRoute(300, 340, route, graph, 25)).toBe(false); // on segment
+    expect(isOffRoute(200, 485, route, graph, 25)).toBe(false); // on GATE→J1 segment
     expect(isOffRoute(300, 900, route, graph, 25)).toBe(true); // far away
   });
 
@@ -39,8 +41,8 @@ describe('live navigation primitives', () => {
     const graph = getDemoGraph();
     const route = findRoute('NODE_GATE', 'NODE_LIBRARY', graph)!;
     const start = remainingRouteInfo(100, 500, route, graph, names(graph));
-    // Gate→Library is 180 m; map-scale estimate should be close.
-    expect(start.remainingMeters).toBeGreaterThan(100);
+    // Gate→Library is 300 m; map-scale estimate should be close.
+    expect(start.remainingMeters).toBeGreaterThan(200);
     expect(start.arrived).toBe(false);
     expect(start.nextInstruction).toMatch(/Library/);
     const end = remainingRouteInfo(500, 180, route, graph, names(graph));
@@ -51,16 +53,22 @@ describe('live navigation primitives', () => {
   it('getNearestRoutePoint finds the closest segment', () => {
     const graph = getDemoGraph();
     const route = findRoute('NODE_GATE', 'NODE_LIBRARY', graph)!;
-    const near = getNearestRoutePoint(300, 340, routePolyline(route, graph));
+    const near = getNearestRoutePoint(200, 485, routePolyline(route, graph));
     expect(near.segmentIndex).toBe(0);
     expect(near.distanceMapUnits).toBeLessThan(1);
   });
 
   it('recalculate routes from a new position after a block', () => {
     const graph = getDemoGraph();
-    graph.edges.find((e) => e.id === 'EDGE_LIBRARY_ADMIN')!.blocked = true;
+    graph.edges.find((e) => e.id === 'EDGE_J2_J3')!.blocked = true;
     const next = recalculateRoute('NODE_LIBRARY', 'NODE_ADMIN', graph);
-    expect(next!.nodeIds).toEqual(['NODE_LIBRARY', 'NODE_GATE', 'NODE_ADMIN']);
+    expect(next!.nodeIds).toEqual([
+      'NODE_LIBRARY',
+      'JUNCTION_02',
+      'JUNCTION_01',
+      'JUNCTION_03',
+      'NODE_ADMIN',
+    ]);
   });
 
   it('recalculate returns null when no path exists', () => {

@@ -48,9 +48,8 @@ export function AppHeader() {
         </NavLink>
         <nav aria-label="Primary" className="ml-auto flex items-center gap-4 sm:gap-5">
           <HeaderLink to="/" end>Home</HeaderLink>
-          <HeaderLink to="/navigate">Navigate</HeaderLink>
           <HeaderLink to="/explore">Explore</HeaderLink>
-          <HeaderLink to="/admin">Admin</HeaderLink>
+          <HeaderLink to="/locate">Locate</HeaderLink>
         </nav>
       </div>
     </header>

@@ -12,7 +12,7 @@ describe('campus dataset validation', () => {
     const report = validateCampusDataset(bundled());
     expect(report.errors).toEqual([]);
     expect(report.valid).toBe(true);
-    expect(report.counts).toMatchObject({ locations: 3, nodes: 3, edges: 3, qrCodes: 3 });
+    expect(report.counts).toMatchObject({ locations: 3, nodes: 6, edges: 6, qrCodes: 3 });
   });
 
   it('rejects duplicate ids', () => {

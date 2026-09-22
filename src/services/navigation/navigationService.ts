@@ -97,14 +97,23 @@ export function remainingRouteInfo(
   }
   const remainingMeters = remainingUnits * scale;
   const arrived = remainingMeters <= arrivedWithinMeters;
-  const nextNodeId = route.nodeIds[Math.min(near.segmentIndex + 1, route.nodeIds.length - 1)]!;
+  // Name the next NAMED place along the route (junctions stay anonymous).
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  let nextNamedId = route.nodeIds[route.nodeIds.length - 1]!;
+  for (let i = near.segmentIndex + 1; i < route.nodeIds.length; i++) {
+    const node = byId.get(route.nodeIds[i]!);
+    if (node?.locationId) {
+      nextNamedId = route.nodeIds[i]!;
+      break;
+    }
+  }
   const legMeters = Math.max(0, remainingMeters);
   return {
     remainingMeters,
     remainingSeconds: walkingTimeSeconds(remainingMeters),
     nextInstruction: arrived
       ? `You have arrived at ${vertexName(route.nodeIds[route.nodeIds.length - 1]!)}.`
-      : `Continue towards ${vertexName(nextNodeId)}${legMeters >= 20 ? ` for about ${Math.round(legMeters)} m` : ''}.`,
+      : `Continue towards ${vertexName(nextNamedId)}${legMeters >= 20 ? ` for about ${Math.round(legMeters)} m` : ''}.`,
     arrived,
   };
 }

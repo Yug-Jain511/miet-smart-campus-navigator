@@ -26,17 +26,23 @@ describe('route weights', () => {
 
   it('accessibility penalty can reroute around an inaccessible shortcut', () => {
     const graph = getDemoGraph();
-    const direct = graph.edges.find((e) => e.id === 'EDGE_LIBRARY_ADMIN')!;
-    direct.accessible = false;
+    const cross = graph.edges.find((e) => e.id === 'EDGE_J2_J3')!;
+    cross.accessible = false;
     const penalized = findRoute('NODE_LIBRARY', 'NODE_ADMIN', graph, {
       accessibilityPenaltyMeters: 500,
     });
-    // Direct 150+500=650 weighted vs via gate 180+220=400 → detour wins.
-    expect(penalized!.nodeIds).toEqual(['NODE_LIBRARY', 'NODE_GATE', 'NODE_ADMIN']);
+    // Cross-link 140+500=640 weighted vs via J1 100+110+130+120=460 → detour wins.
+    expect(penalized!.nodeIds).toEqual([
+      'NODE_LIBRARY',
+      'JUNCTION_02',
+      'JUNCTION_01',
+      'JUNCTION_03',
+      'NODE_ADMIN',
+    ]);
     // Displayed distance stays RAW meters (penalties select the path only).
-    expect(penalized!.totalDistanceMeters).toBe(400);
-    // Without penalty the direct edge still wins.
+    expect(penalized!.totalDistanceMeters).toBe(460);
+    // Without penalty the cross-link still wins.
     const plain = findRoute('NODE_LIBRARY', 'NODE_ADMIN', getDemoGraph());
-    expect(plain!.nodeIds).toEqual(['NODE_LIBRARY', 'NODE_ADMIN']);
+    expect(plain!.nodeIds).toEqual(['NODE_LIBRARY', 'JUNCTION_02', 'JUNCTION_03', 'NODE_ADMIN']);
   });
 });

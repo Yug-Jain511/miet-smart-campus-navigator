@@ -8,7 +8,10 @@ import {
   type GpsReading,
 } from '../services/positioning/gpsProvider';
 import { manualFixForPoint } from '../services/positioning/manualProvider';
-import { resolveGpsFix } from '../services/positioning/positionService';
+import {
+  resolveGpsFix,
+  type GpsResolutionOptions,
+} from '../services/positioning/positionService';
 import { qrFixForLocation } from '../services/positioning/qrProvider';
 import {
   DEFAULT_MAX_SNAP_METERS,
@@ -23,6 +26,7 @@ import {
 export function usePosition(
   graph: NavigationGraph,
   calibrationPoints: CalibrationPoint[] = [],
+  gpsOpts: GpsResolutionOptions = {},
 ) {
   const [fix, setFix] = useState<PositionFix>(() => unknownFix());
   const [gpsError, setGpsError] = useState<string | null>(null);
@@ -31,9 +35,9 @@ export function usePosition(
 
   const applyReading = useCallback(
     (reading: GpsReading) => {
-      setFix(resolveGpsFix(reading, graph, calibrationPoints));
+      setFix(resolveGpsFix(reading, graph, calibrationPoints, gpsOpts));
     },
-    [graph, calibrationPoints],
+    [graph, calibrationPoints, gpsOpts],
   );
 
   const locateOnce = useCallback(async () => {

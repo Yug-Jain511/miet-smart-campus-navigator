@@ -1,6 +1,6 @@
 import { Polyline } from 'react-leaflet';
 import type { NavigationNode } from '../../models/types';
-import { toLatLng } from './mapUtils';
+import { routeToLatLngs } from './mapUtils';
 
 /** Blue highlighted walking route through ordered node ids. */
 export function RouteLayer({
@@ -11,11 +11,7 @@ export function RouteLayer({
   nodes: NavigationNode[];
 }) {
   if (routeNodeIds.length < 2) return null;
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const positions = routeNodeIds.map((id) => {
-    const n = byId.get(id);
-    return toLatLng(n?.x, n?.y);
-  });
+  const positions = routeToLatLngs(routeNodeIds, nodes);
   return (
     <>
       {/* casing */}

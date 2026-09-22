@@ -36,16 +36,25 @@ export function buildDirections(
   const steps: string[] = [];
   steps.push(`Start at ${startName}.`);
   for (let i = 0; i < pathNodeIds.length - 1; i++) {
-    const from = byId.get(pathNodeIds[i]);
     const to = byId.get(pathNodeIds[i + 1]);
-    const toName = nodeLabel(to, nameOf);
     const dist = Math.round(edgeDistance(pathNodeIds[i], pathNodeIds[i + 1]));
-    if (i === pathNodeIds.length - 2) {
-      steps.push(`Walk towards ${toName} for about ${dist} m.`);
-      steps.push(`${toName} is ahead on your route.`);
+    const isLastLeg = i === pathNodeIds.length - 2;
+    if (to?.locationId) {
+      // Named destination / waypoint: name it.
+      const toName = nodeLabel(to, nameOf);
+      if (isLastLeg) {
+        steps.push(`Walk towards ${toName} for about ${dist} m.`);
+        steps.push(`${toName} is ahead on your route.`);
+      } else {
+        steps.push(`Walk towards ${toName} for about ${dist} m, then continue.`);
+      }
     } else {
-      void from;
-      steps.push(`Walk towards ${toName} for about ${dist} m, then continue.`);
+      // Unnamed junction: keep guidance walkway-generic, never invent names.
+      steps.push(
+        isLastLeg
+          ? `Continue along the walkway for about ${dist} m.`
+          : `Continue along the walkway for about ${dist} m, then continue.`,
+      );
     }
   }
   steps.push(`You have arrived at ${endName}.`);

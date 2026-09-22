@@ -7,10 +7,11 @@ import { useApp } from '../../context/AppContext';
 import { CampusMap } from '../../components/map/CampusMap';
 import { MapControls } from '../../components/map/MapControls';
 import { PositionBadge } from '../../components/map/PositionBadge';
-import { toLatLng } from '../../components/map/mapUtils';
+import { toLatLng, routeToLatLngs } from '../../components/map/mapUtils';
+import { logRouteDebug } from '../../services/routing/routeDebug';
+import { demoFallbackOrigin, pickKnownOrigin } from '../../services/positioning/originResolver';
 import { DestinationSearch } from '../../components/navigation/DestinationSearch';
 import { DirectionsList } from '../../components/navigation/DirectionsList';
-import { LocationSelector } from '../../components/navigation/LocationSelector';
 import { RouteSummary } from '../../components/navigation/RouteSummary';
 import { YouAreHereBanner } from '../../components/navigation/YouAreHereBanner';
 import { QRScannerEntry } from '../../components/qr/QRScannerEntry';
@@ -21,10 +22,18 @@ import { ErrorBanner } from '../../components/ui/ErrorBanner';
 export function NavigatePage() {
   const { campus, journey, position, navigation } = useApp();
   const [params, setParams] = useSearchParams();
-  const [fromDraft, setFromDraft] = useState<string | null>(journey.currentLocationId);
   const [toDraft, setToDraft] = useState<string | null>(journey.destinationId);
   const [qrError, setQrError] = useState<string | null>(null);
   const [tapMode, setTapMode] = useState(false);
+  // Auto location resolution state (destination-first flow).
+  const [locating, setLocating] = useState(false);
+  const [locateFailed, setLocateFailed] = useState(false);
+  // DEMO fallback origin (demo dataset only, GPS unavailable). Kept separate
+  // from position.fix so GPS honesty is never compromised.
+  const [demoOrigin, setDemoOrigin] = useState<string | null>(null);
+  const failedFor = useRef<string | null>(null);
+  const fittedRouteKey = useRef<string | null>(null);
+  const loggedRouteKey = useRef<string | null>(null);
   const mapRef = useRef<L.Map | null>(null);
 
   // Dataset-driven name lookup (no hardcoded location table).
@@ -35,22 +44,22 @@ export function NavigatePage() {
   const nameOf = (id: string | null) => (id ? (names.get(id) ?? id) : '—');
   const validIds = useMemo(() => campus.locations.map((l) => l.id), [campus.locations]);
 
-  // Keep drafts in sync when QR / deep link / position sets journey state.
-  useEffect(() => {
-    setFromDraft(journey.currentLocationId);
-  }, [journey.currentLocationId]);
+  // Keep draft in sync when deep link / route state sets the destination.
   useEffect(() => {
     setToDraft(journey.destinationId);
   }, [journey.destinationId]);
 
-  // Adopt a snapped/confirmed position fix as the route origin.
+  // Reset recovery state when the destination changes.
   useEffect(() => {
-    if (position.fix.locationId && position.fix.confidence !== 'low') {
-      setFromDraft(position.fix.locationId);
-    }
-  }, [position.fix]);
+    failedFor.current = null;
+    fittedRouteKey.current = null;
+    loggedRouteKey.current = null;
+    setLocateFailed(false);
+    setLocating(false);
+    setDemoOrigin(null);
+  }, [toDraft]);
 
-  // Deep link: /navigate?destination=LIBRARY (from Explore cards).
+  // Deep link: /navigate?destination=LIBRARY (from Home / Explore cards).
   useEffect(() => {
     const dest = params.get('destination');
     if (dest && names.has(dest.toUpperCase())) {
@@ -59,10 +68,81 @@ export function NavigatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Destination-first auto flow: once a destination is set, resolve the
+  // origin automatically — QR > session > live fix > one GPS attempt.
+  // No "Where are you?" form. Route calculates itself when origin is known.
+  useEffect(() => {
+    if (!toDraft || navigation.active) return;
+    if (journey.route && journey.destinationId === toDraft) return;
+    const known = pickKnownOrigin(
+      journey.qrLocationId,
+      journey.currentLocationId,
+      {
+        locationId: position.fix.locationId ?? null,
+        confident: position.fix.confidence !== 'low',
+      },
+    );
+    if (known) {
+      setLocating(false);
+      setLocateFailed(false);
+      journey.requestRoute(known, toDraft);
+      return;
+    }
+    if (failedFor.current === toDraft || locating) return;
+    setLocating(true);
+    setLocateFailed(false);
+    void position.locateOnce();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
+  // Settle the GPS attempt: snapped fix → route; demo fallback (demo
+  // dataset only) → MAIN_GATE with an explicit demo badge; otherwise recovery.
+  useEffect(() => {
+    if (!locating || !toDraft) return;
+    if (position.fix.source === 'unknown' && !position.gpsError) return; // still waiting
+    const loc =
+      position.fix.locationId && position.fix.confidence !== 'low'
+        ? position.fix.locationId
+        : null;
+    if (loc) {
+      setLocating(false);
+      journey.requestRoute(loc, toDraft);
+      return;
+    }
+    // DEMO fallback (demo dataset only): MAIN_GATE stands in so the demo
+    // route works without geolocation. Published datasets show recovery UI.
+    const fallback = demoFallbackOrigin(campus.datasetInfo.isDemo);
+    if (fallback) {
+      setLocating(false);
+      setDemoOrigin(fallback);
+      journey.requestRoute(fallback, toDraft);
+      return;
+    }
+    setLocating(false);
+    setLocateFailed(true);
+    failedFor.current = toDraft;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locating, toDraft, position.fix, position.gpsError]);
+
   // Feed live fixes into the navigation session (remaining + off-route).
   useEffect(() => {
     if (navigation.active) navigation.updateFix(position.fix);
   }, [navigation, position.fix]);
+
+  // A real location arriving later (QR scan, manual tap) replaces the demo origin.
+  useEffect(() => {
+    if (!toDraft || navigation.active || !demoOrigin) return;
+    const real =
+      journey.qrLocationId ??
+      (position.fix.locationId && position.fix.confidence !== 'low'
+        ? position.fix.locationId
+        : null);
+    if (real && real !== demoOrigin) {
+      setDemoOrigin(null);
+      journey.requestRoute(real, toDraft);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
 
   const committedFromName = nameOf(journey.currentLocationId);
   const committedToName = nameOf(journey.destinationId);
@@ -75,13 +155,10 @@ export function NavigatePage() {
     () => (displayedRoute ? displayedRoute.nodeIds : []),
     [displayedRoute],
   );
-  const routePoints = useMemo(() => {
-    const byId = new Map(campus.graph.nodes.map((n) => [n.id, n]));
-    return routeNodeIds.map((id) => {
-      const n = byId.get(id);
-      return toLatLng(n?.x, n?.y);
-    });
-  }, [routeNodeIds, campus.graph]);
+  const routePoints = useMemo(
+    () => routeToLatLngs(routeNodeIds, campus.graph.nodes),
+    [routeNodeIds, campus.graph],
+  );
 
   function clearQrParams() {
     const next = new URLSearchParams(params);
@@ -92,6 +169,7 @@ export function NavigatePage() {
   // Stable tap handler so the map doesn't re-render on every GPS tick.
   const handleMapTap = useCallback(
     (x: number, y: number) => {
+      setDemoOrigin(null);
       position.applyManual(x, y, campus.settings.maxSnapMeters);
       setTapMode(false);
     },
@@ -126,6 +204,41 @@ export function NavigatePage() {
     });
   }
 
+  // Auto-fit each new preview route so a computed route is always visible.
+  useEffect(() => {
+    if (navigation.active || !displayedRoute || displayedRoute.nodeIds.length < 2) return;
+    const key = displayedRoute.nodeIds.join('>');
+    if (fittedRouteKey.current === key) return;
+    fittedRouteKey.current = key;
+    fitRoute();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
+  // Dev diagnostics: log the full chain once per route outcome.
+  useEffect(() => {
+    if (!toDraft || navigation.active || displayedRoute === undefined) return;
+    const key = `dest=${toDraft}|route=${displayedRoute ? displayedRoute.nodeIds.join('>') : 'null'}`;
+    if (loggedRouteKey.current === key) return;
+    loggedRouteKey.current = key;
+    const nodeByLoc = new Map(
+      campus.graph.nodes.map((n) => [n.locationId ?? '', n.id]),
+    );
+    const srcLoc = journey.currentLocationId;
+    const dstLoc = journey.destinationId;
+    logRouteDebug({
+      sourceLocation: srcLoc,
+      sourceNode: srcLoc ? (nodeByLoc.get(srcLoc) ?? null) : null,
+      destinationLocation: dstLoc,
+      destinationNode: dstLoc ? (nodeByLoc.get(dstLoc) ?? null) : null,
+      nodeIds: displayedRoute ? displayedRoute.nodeIds : null,
+      routeCoords: displayedRoute ? routeToLatLngs(displayedRoute.nodeIds, campus.graph.nodes) : null,
+      distanceMeters: displayedRoute ? displayedRoute.totalDistanceMeters : null,
+      etaSeconds: displayedRoute ? displayedRoute.estimatedWalkingTimeSeconds : null,
+      routeError: displayedRoute ? null : 'findRoute returned null (no path)',
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
   const hasRoute = !!displayedRoute && displayedRoute.nodeIds.length > 1;
 
   function startNavigation() {
@@ -146,6 +259,7 @@ export function NavigatePage() {
         validIds={validIds}
         onValid={(id) => {
           setQrError(null);
+          setDemoOrigin(null);
           journey.applyQrLocation(id);
           position.applyQr(id);
         }}
@@ -174,6 +288,11 @@ export function NavigatePage() {
             clearQrParams();
           }}
         />
+      ) : null}
+      {demoOrigin && !journey.qrLocationId ? (
+        <p role="status" className="border border-amber-700/25 bg-amber-50 px-3 py-2 text-[13px] font-semibold text-amber-900">
+          Demo location: Main Gate — GPS unavailable, showing the demo route.
+        </p>
       ) : null}
 
       {/* HERO MAP with floating search + controls */}
@@ -263,42 +382,70 @@ export function NavigatePage() {
           </div>
         ) : displayedRoute === undefined ? (
           <div className="border-t border-ink-deep/10 pt-3">
-            <p className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">WHERE TO?</p>
-            {/* Quick destinations from campus data */}
+            <p className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">
+              {locating ? 'FINDING YOUR LOCATION…' : 'WHERE TO?'}
+            </p>
+            {/* Quick destinations from campus data (entrances are origins, not goals) */}
             <div className="mt-2 flex flex-wrap gap-1.5" role="list" aria-label="Quick destinations">
-              {campus.locations.map((l) => (
-                <button
-                  key={l.id}
-                  type="button"
-                  role="listitem"
-                  onClick={() => setToDraft(l.id)}
-                  aria-pressed={toDraft === l.id}
-                  className={`rounded-control border px-3 py-1.5 font-mono text-[11px] font-bold tracking-wider transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-dark ${
-                    toDraft === l.id
-                      ? 'border-brand bg-brand text-white'
-                      : 'border-ink-deep/15 bg-white text-ink-soft hover:border-brand/50 hover:text-brand-ink'
-                  }`}
-                >
-                  {l.name.toUpperCase()}
-                </button>
-              ))}
+              {campus.locations
+                .filter((l) => l.type !== 'entrance')
+                .map((l) => (
+                  <button
+                    key={l.id}
+                    type="button"
+                    role="listitem"
+                    onClick={() => setToDraft(l.id)}
+                    aria-pressed={toDraft === l.id}
+                    className={`rounded-control border px-3 py-1.5 font-mono text-[11px] font-bold tracking-wider transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-dark ${
+                      toDraft === l.id
+                        ? 'border-brand bg-brand text-white'
+                        : 'border-ink-deep/15 bg-white text-ink-soft hover:border-brand/50 hover:text-brand-ink'
+                    }`}
+                  >
+                    {l.name.toUpperCase()}
+                  </button>
+                ))}
             </div>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <LocationSelector
-                id="current-location"
-                label="Where are you?"
-                locations={campus.locations}
-                value={fromDraft}
-                onChange={setFromDraft}
-              />
-              <LocationSelector
-                id="destination-location"
-                label="Destination"
-                locations={campus.locations}
-                value={toDraft}
-                onChange={setToDraft}
-              />
-            </div>
+            {locating ? (
+              <p className="mt-3 text-[13px] text-ink-soft" role="status">
+                Finding your location… route calculates automatically once you&apos;re located.
+              </p>
+            ) : null}
+            {locateFailed && toDraft ? (
+              <div className="mt-3 border border-ink-deep/10 bg-white p-3">
+                <p className="text-sm font-bold text-ink-deep">Couldn&apos;t determine your location.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      failedFor.current = null;
+                      setLocateFailed(false);
+                      setLocating(true);
+                      void position.locateOnce();
+                    }}
+                  >
+                    Try GPS again
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setTapMode((v) => !v)}
+                    aria-pressed={tapMode}
+                  >
+                    <Hand className="h-4 w-4" aria-hidden="true" />
+                    {tapMode ? 'Cancel tap' : 'Set Location Manually'}
+                  </Button>
+                </div>
+                {tapMode ? (
+                  <p className="mt-2 text-xs text-ink-soft">Tap anywhere on the map to set your position.</p>
+                ) : (
+                  <p className="mt-2 text-xs text-ink-soft">
+                    Or scan a location QR code with your camera — it opens navigation with that spot confirmed.
+                  </p>
+                )}
+              </div>
+            ) : null}
             {journey.recent.length > 0 ? (
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 <span className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">RECENT</span>
@@ -314,22 +461,6 @@ export function NavigatePage() {
                 ))}
               </div>
             ) : null}
-            {journey.formError ? <div className="mt-3"><ErrorBanner message={journey.formError} /></div> : null}
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button type="button" onClick={() => journey.requestRoute(fromDraft, toDraft)} className="flex-1">
-                <Navigation className="h-4 w-4" aria-hidden="true" />
-                Find Route
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setTapMode((v) => !v)}
-                aria-pressed={tapMode}
-              >
-                <Hand className="h-4 w-4" aria-hidden="true" />
-                {tapMode ? 'Cancel tap' : 'Set on map'}
-              </Button>
-            </div>
           </div>
         ) : displayedRoute === null ? (
           <div className="border-t border-ink-deep/10 pt-3">
@@ -337,7 +468,13 @@ export function NavigatePage() {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => journey.requestRoute(fromDraft, toDraft)}
+              onClick={() => {
+                failedFor.current = null;
+                setLocateFailed(false);
+                if (journey.currentLocationId && toDraft) {
+                  journey.requestRoute(journey.currentLocationId, toDraft);
+                }
+              }}
               className="mt-3"
             >
               Try again
@@ -353,6 +490,9 @@ export function NavigatePage() {
                 fromName={committedFromName}
                 toName={committedToName}
               />
+              <p className="font-mono text-[10px] tracking-[0.08em] text-ink-soft">
+                DEMO ROUTE — WALKING PATH WILL BE UPDATED AFTER CAMPUS SURVEY
+              </p>
               <div className="flex flex-wrap gap-2">
                 <Button type="button" onClick={startNavigation}>
                   <Navigation className="h-4 w-4" aria-hidden="true" />

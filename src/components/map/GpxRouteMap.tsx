@@ -54,6 +54,17 @@ function MapTapHandler({
 
 function FitOnLoad({ points }: { points: LatLng[] }) {  const map = useMap();
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const onTileError = () => {
+      // eslint-disable-next-line no-console
+      console.warn('[map-debug] basemap tile failed to load — check network access to the tile provider.');
+    };
+    map.on('tileerror', onTileError);
+    return () => {
+      map.off('tileerror', onTileError);
+    };
+  }, [map]);
+  useEffect(() => {
     if (points.length === 0) return;
     map.fitBounds(
       L.latLngBounds(points.map((p) => [p.lat, p.lng] as [number, number])).pad(0.2),

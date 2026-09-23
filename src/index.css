@@ -20,11 +20,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Leaflet map fixes for Vite + clean campus look */
+/* Leaflet map fixes for Vite + clean campus look.
+   Neutral tile-gray (not white) so a tile outage reads as "map" not "blank". */
 .leaflet-container {
   font-family: inherit;
   outline: none;
-  background: #edf1e6;
+  background: #e5e3df;
 }
 .leaflet-container:focus-visible {
   outline: 2px solid var(--miet-red-dark);
@@ -35,13 +36,17 @@ body {
   border: none;
 }
 
-/* Route draw-in: smooth 450ms reveal, motion-safe. */
+/* Route draw-in: resting state is always painted; the animation only
+   enhances. A remount mid-draw can never strand the line invisible. */
 .miet-route-line {
   stroke-dasharray: 1200;
-  stroke-dashoffset: 1200;
-  animation: miet-route-draw 0.45s ease-out forwards;
+  stroke-dashoffset: 0;
+  animation: miet-route-draw 0.45s ease-out;
 }
 @keyframes miet-route-draw {
+  from {
+    stroke-dashoffset: 1200;
+  }
   to {
     stroke-dashoffset: 0;
   }

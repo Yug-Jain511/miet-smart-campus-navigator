@@ -19,7 +19,7 @@ import {
   isOffTrack,
   remainingOnTrack,
 } from '../../services/navigation/geoNavigation';
-import { demoFallbackOrigin, pickKnownOrigin } from '../../services/positioning/originResolver';
+import { resolvePreviewOrigin } from '../../services/positioning/originResolver';
 import { gpxSourcesFor } from '../../services/routes/routeRegistry';
 
 /**
@@ -97,56 +97,52 @@ export function NavigatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Destination-first auto flow — origin resolves itself, route follows.
+  // Destination-first auto flow: the origin resolves SYNCHRONOUSLY —
+  // QR > session > live fix > MAIN_GATE demo default (demo dataset).
+  // No "Where are you?" form and NO automatic geolocation. The route
+  // calculates itself the moment a destination is set.
   useEffect(() => {
     if (!toDraft || geoActive) return;
     if (journey.currentLocationId && journey.destinationId === toDraft) return;
-    const known = pickKnownOrigin(
-      journey.qrLocationId,
-      journey.currentLocationId,
-      {
+    const resolved = resolvePreviewOrigin({
+      qrLocationId: journey.qrLocationId,
+      sessionLocationId: journey.currentLocationId,
+      fix: {
         locationId: position.fix.locationId ?? null,
         confident: position.fix.confidence !== 'low',
       },
-    );
-    if (known) {
-      setLocating(false);
-      setLocateFailed(false);
-      journey.requestRoute(known, toDraft);
+      isDemoDataset: campus.datasetInfo.isDemo,
+    });
+    if (!resolved.origin) {
+      if (failedFor.current === toDraft) return;
+      setLocateFailed(true);
+      failedFor.current = toDraft;
       return;
     }
-    if (failedFor.current === toDraft || locating) return;
-    setLocating(true);
+    setLocating(false);
     setLocateFailed(false);
-    void position.locateOnce();
+    setDemoOrigin(resolved.isDemoFallback ? resolved.origin : null);
+    journey.requestRoute(resolved.origin, toDraft);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
-  // Settle the GPS attempt: snapped fix → route; demo fallback → MAIN_GATE.
+  // Adopt an EXPLICITLY requested GPS fix (Try-again / locate control).
+  // Geolocation never starts here — only results arriving from user actions.
   useEffect(() => {
-    if (!locating || !toDraft) return;
-    if (position.fix.source === 'unknown' && !position.gpsError) return; // still waiting
+    if (!toDraft || geoActive) return;
+    if (!locateFailed && !locating) return;
     const loc =
       position.fix.locationId && position.fix.confidence !== 'low'
         ? position.fix.locationId
         : null;
-    if (loc) {
-      setLocating(false);
-      journey.requestRoute(loc, toDraft);
-      return;
-    }
-    const fallback = demoFallbackOrigin(campus.datasetInfo.isDemo);
-    if (fallback) {
-      setLocating(false);
-      setDemoOrigin(fallback);
-      journey.requestRoute(fallback, toDraft);
-      return;
-    }
+    if (!loc) return;
     setLocating(false);
-    setLocateFailed(true);
-    failedFor.current = toDraft;
+    setLocateFailed(false);
+    failedFor.current = null;
+    setDemoOrigin(null);
+    journey.requestRoute(loc, toDraft);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locating, toDraft, position.fix, position.gpsError]);
+  }, [position.fix, position.gpsError]);
 
   // A real location arriving later (QR scan, manual tap) replaces the demo origin.
   useEffect(() => {
@@ -380,9 +376,9 @@ export function NavigatePage() {
             </div>
           )}
 
-          {/* Floating search */}
-          <div className="absolute left-2.5 right-2.5 top-[4.25rem] z-[500] sm:left-auto sm:w-[360px] sm:right-16">
-            <div className="rounded-control bg-white/95 p-1.5 shadow ring-1 ring-ink-deep/10 backdrop-blur">
+          {/* Floating search (wrapper clicks through to the map) */}
+          <div className="pointer-events-none absolute left-2.5 right-2.5 top-[4.25rem] z-[500] sm:left-auto sm:w-[360px] sm:right-16">
+            <div className="pointer-events-auto rounded-control bg-white/95 p-1.5 shadow ring-1 ring-ink-deep/10 backdrop-blur">
               <DestinationSearch
                 onPick={(loc) => pickDestination(loc.id)}
                 compact
@@ -396,8 +392,8 @@ export function NavigatePage() {
             ) : null}
           </div>
 
-          {/* Status strips */}
-          <div className="absolute left-2.5 right-2.5 top-[8.25rem] z-[500] space-y-2 sm:left-auto sm:w-[360px] sm:right-16">
+          {/* Status strips (wrapper clicks through to the map) */}
+          <div className="pointer-events-none absolute left-2.5 right-2.5 top-[8.25rem] z-[500] space-y-2 sm:left-auto sm:w-[360px] sm:right-16 [&>*]:pointer-events-auto">
             {qrError ? <ErrorBanner message={qrError} /> : null}
             {position.gpsError ? <ErrorBanner message={position.gpsError} /> : null}
             {qrLocationName ? (
@@ -445,19 +441,17 @@ export function NavigatePage() {
                     {geoInfo.nextStep ? geoInfo.nextStep.text : geoInfo.remaining.nextInstruction}
                   </p>
                 ) : (
-                  <p className="text-sm text-ink-soft">Waiting for your live position…</p>
+                  <p className="text-sm text-ink-soft">
+                    GPS unavailable — showing the planned route. Enable location for live guidance.
+                  </p>
                 )}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {geoInfo ? (
-                    <p className="font-mono text-xs tracking-wide text-ink-soft">
-                      <strong className="text-ink-deep">{nameOf(destId).toUpperCase()}</strong> ·{' '}
-                      {formatDistance(geoInfo.remaining.remainingMeters)} ·{' '}
-                      {formatWalkingTime(
-                        geoInfo.remaining.remainingMeters / 1.4,
-                      )}{' '}
-                      LEFT
-                    </p>
-                  ) : null}
+                  <p className="font-mono text-xs tracking-wide text-ink-soft">
+                    <strong className="text-ink-deep">{nameOf(destId).toUpperCase()}</strong> ·{' '}
+                    {formatDistance(geoInfo ? geoInfo.remaining.remainingMeters : gpxRoute.distanceMeters)} ·{' '}
+                    {formatWalkingTime(geoInfo ? geoInfo.remaining.remainingMeters / 1.4 : gpxRoute.etaSeconds)}{' '}
+                    LEFT
+                  </p>
                   <span className="ml-auto flex gap-2">
                     {geoInfo?.off ? (
                       <Button type="button" onClick={fitGpx}>

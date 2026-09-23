@@ -83,6 +83,16 @@ fictional demo values).
 - Voice navigation, crowd prediction, ML route optimization
 - Indoor floor navigation, full-campus expansion
 
+### Real surveyed tracks (Phase 3 — IMPLEMENTED)
+
+The walking survey arrived as two Strava GPX recordings in `public/routes/`
+(`Main_gate_to_admin.gpx`, 57 pts; `Admin_block_to_library.gpx`, 47 pts).
+The student-facing route view now renders these exact tracks as the blue
+polyline on a geographic Leaflet map (OSM tiles) — never on the fictional
+CRS.Simple plane. Gate→Library concatenates both tracks; distance/ETA come
+from haversine geometry ÷ 1.4 m/s. Dijkstra + the demo-plane graph remain
+intact for Admin tooling and future graph routing.
+
 ### Replacing the demo walkways with a real surveyed track (GPX workflow)
 
 When the walking survey arrives (e.g. a Strava/GPX recording), no UI or engine

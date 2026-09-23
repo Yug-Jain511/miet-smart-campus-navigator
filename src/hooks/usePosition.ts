@@ -7,8 +7,9 @@ import {
   watchGps,
   type GpsReading,
 } from '../services/positioning/gpsProvider';
-import { manualFixForPoint } from '../services/positioning/manualProvider';
+import { manualFixForPoint, manualFixForGeo } from '../services/positioning/manualProvider';
 import {
+  DEFAULT_PROXIMITY_METERS,
   resolveGpsFix,
   type GpsResolutionOptions,
 } from '../services/positioning/positionService';
@@ -90,6 +91,20 @@ export function usePosition(
     [graph],
   );
 
+  const applyManualGeo = useCallback(
+    (lat: number, lng: number) => {
+      const f = manualFixForGeo(
+        lat,
+        lng,
+        gpsOpts.anchors ?? [],
+        gpsOpts.proximityMeters ?? DEFAULT_PROXIMITY_METERS,
+      );
+      setFix(f);
+      return f;
+    },
+    [gpsOpts],
+  );
+
   const clear = useCallback(() => setFix(unknownFix()), []);
 
   return {
@@ -101,6 +116,7 @@ export function usePosition(
     stopTracking,
     applyQr,
     applyManual,
+    applyManualGeo,
     setFix,
     clear,
   };

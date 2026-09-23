@@ -1,62 +1,91 @@
 import L from 'leaflet';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Hand, Navigation } from 'lucide-react';
+import { ChevronDown, Hand, Navigation } from 'lucide-react';
 import { formatDistance, formatWalkingTime } from '../../services/routing/walkingTime';
 import { useApp } from '../../context/AppContext';
-import { CampusMap } from '../../components/map/CampusMap';
+import { GpxRouteMap } from '../../components/map/GpxRouteMap';
 import { MapControls } from '../../components/map/MapControls';
 import { PositionBadge } from '../../components/map/PositionBadge';
-import { toLatLng, routeToLatLngs } from '../../components/map/mapUtils';
-import { logRouteDebug } from '../../services/routing/routeDebug';
-import { demoFallbackOrigin, pickKnownOrigin } from '../../services/positioning/originResolver';
 import { DestinationSearch } from '../../components/navigation/DestinationSearch';
 import { DirectionsList } from '../../components/navigation/DirectionsList';
-import { RouteSummary } from '../../components/navigation/RouteSummary';
 import { YouAreHereBanner } from '../../components/navigation/YouAreHereBanner';
 import { QRScannerEntry } from '../../components/qr/QRScannerEntry';
 import { Button } from '../../components/ui/Button';
-import { EmptyState } from '../../components/ui/EmptyState';
 import { ErrorBanner } from '../../components/ui/ErrorBanner';
+import { useGpxRoute } from '../../hooks/useGpxRoute';
+import { logRouteDebug } from '../../services/routing/routeDebug';
+import {
+  isOffTrack,
+  remainingOnTrack,
+} from '../../services/navigation/geoNavigation';
+import { demoFallbackOrigin, pickKnownOrigin } from '../../services/positioning/originResolver';
+import { gpxSourcesFor } from '../../services/routes/routeRegistry';
 
+/**
+ * Full-screen GPX navigation experience. Destination-first: the origin
+ * resolves automatically (QR > session > live fix > GPS attempt > labeled
+ * MAIN_GATE demo fallback), the registered real track renders blue,
+ * and live tracking snaps to that same surveyed geometry.
+ */
 export function NavigatePage() {
-  const { campus, journey, position, navigation } = useApp();
+  const { campus, journey, position } = useApp();
   const [params, setParams] = useSearchParams();
   const [toDraft, setToDraft] = useState<string | null>(journey.destinationId);
   const [qrError, setQrError] = useState<string | null>(null);
   const [tapMode, setTapMode] = useState(false);
-  // Auto location resolution state (destination-first flow).
   const [locating, setLocating] = useState(false);
   const [locateFailed, setLocateFailed] = useState(false);
-  // DEMO fallback origin (demo dataset only, GPS unavailable). Kept separate
-  // from position.fix so GPS honesty is never compromised.
   const [demoOrigin, setDemoOrigin] = useState<string | null>(null);
+  const [geoActive, setGeoActive] = useState(false);
+  const [showDirections, setShowDirections] = useState(false);
   const failedFor = useRef<string | null>(null);
-  const fittedRouteKey = useRef<string | null>(null);
-  const loggedRouteKey = useRef<string | null>(null);
   const mapRef = useRef<L.Map | null>(null);
 
-  // Dataset-driven name lookup (no hardcoded location table).
   const names = useMemo(
     () => new Map(campus.locations.map((l) => [l.id, l.name])),
     [campus.locations],
   );
+  const coords = useMemo(
+    () =>
+      new Map(
+        campus.locations.map((l) => [l.id, { lat: l.latitude ?? 0, lng: l.longitude ?? 0 }]),
+      ),
+    [campus.locations],
+  );
   const nameOf = (id: string | null) => (id ? (names.get(id) ?? id) : '—');
   const validIds = useMemo(() => campus.locations.map((l) => l.id), [campus.locations]);
+
+  const pickDestination = useCallback(
+    (id: string | null) => {
+      setGeoActive(false);
+      position.stopTracking();
+      setToDraft(id);
+    },
+    [position],
+  );
 
   // Keep draft in sync when deep link / route state sets the destination.
   useEffect(() => {
     setToDraft(journey.destinationId);
   }, [journey.destinationId]);
 
-  // Reset recovery state when the destination changes.
+  // Reset transient state when the destination changes.
   useEffect(() => {
     failedFor.current = null;
-    fittedRouteKey.current = null;
-    loggedRouteKey.current = null;
     setLocateFailed(false);
     setLocating(false);
     setDemoOrigin(null);
+    setShowDirections(false);
+  }, [toDraft]);
+
+  // Reset transient state when the destination changes.
+  useEffect(() => {
+    failedFor.current = null;
+    setLocateFailed(false);
+    setLocating(false);
+    setDemoOrigin(null);
+    setShowDirections(false);
   }, [toDraft]);
 
   // Deep link: /navigate?destination=LIBRARY (from Home / Explore cards).
@@ -68,12 +97,10 @@ export function NavigatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Destination-first auto flow: once a destination is set, resolve the
-  // origin automatically — QR > session > live fix > one GPS attempt.
-  // No "Where are you?" form. Route calculates itself when origin is known.
+  // Destination-first auto flow — origin resolves itself, route follows.
   useEffect(() => {
-    if (!toDraft || navigation.active) return;
-    if (journey.route && journey.destinationId === toDraft) return;
+    if (!toDraft || geoActive) return;
+    if (journey.currentLocationId && journey.destinationId === toDraft) return;
     const known = pickKnownOrigin(
       journey.qrLocationId,
       journey.currentLocationId,
@@ -95,8 +122,7 @@ export function NavigatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
-  // Settle the GPS attempt: snapped fix → route; demo fallback (demo
-  // dataset only) → MAIN_GATE with an explicit demo badge; otherwise recovery.
+  // Settle the GPS attempt: snapped fix → route; demo fallback → MAIN_GATE.
   useEffect(() => {
     if (!locating || !toDraft) return;
     if (position.fix.source === 'unknown' && !position.gpsError) return; // still waiting
@@ -109,8 +135,6 @@ export function NavigatePage() {
       journey.requestRoute(loc, toDraft);
       return;
     }
-    // DEMO fallback (demo dataset only): MAIN_GATE stands in so the demo
-    // route works without geolocation. Published datasets show recovery UI.
     const fallback = demoFallbackOrigin(campus.datasetInfo.isDemo);
     if (fallback) {
       setLocating(false);
@@ -124,14 +148,9 @@ export function NavigatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locating, toDraft, position.fix, position.gpsError]);
 
-  // Feed live fixes into the navigation session (remaining + off-route).
-  useEffect(() => {
-    if (navigation.active) navigation.updateFix(position.fix);
-  }, [navigation, position.fix]);
-
   // A real location arriving later (QR scan, manual tap) replaces the demo origin.
   useEffect(() => {
-    if (!toDraft || navigation.active || !demoOrigin) return;
+    if (!toDraft || geoActive || !demoOrigin) return;
     const real =
       journey.qrLocationId ??
       (position.fix.locationId && position.fix.confidence !== 'low'
@@ -144,21 +163,38 @@ export function NavigatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
-  const committedFromName = nameOf(journey.currentLocationId);
-  const committedToName = nameOf(journey.destinationId);
-  const qrLocationName = journey.qrLocationId ? nameOf(journey.qrLocationId) : null;
+  const originId = journey.currentLocationId;
+  const destId = journey.destinationId ?? toDraft;
+  const samePlace = !!originId && !!destId && originId === destId;
 
-  // Active session route wins over the preview route.
-  const displayedRoute =
-    navigation.active && navigation.sessionRoute ? navigation.sessionRoute : journey.route;
-  const routeNodeIds = useMemo(
-    () => (displayedRoute ? displayedRoute.nodeIds : []),
-    [displayedRoute],
+  const {
+    status: gpxStatus,
+    route: gpxRoute,
+    error: gpxError,
+    reload: reloadGpx,
+  } = useGpxRoute(
+    originId && destId && !samePlace ? originId : null,
+    originId && destId && !samePlace ? destId : null,
+    nameOf(originId),
+    nameOf(destId),
   );
-  const routePoints = useMemo(
-    () => routeToLatLngs(routeNodeIds, campus.graph.nodes),
-    [routeNodeIds, campus.graph],
-  );
+
+  const originLoc = originId ? campus.locations.find((l) => l.id === originId) : undefined;
+  const destLoc = destId ? campus.locations.find((l) => l.id === destId) : undefined;
+
+  // Live geo navigation state (snapped to the surveyed track only).
+  const geoInfo = useMemo(() => {
+    if (!geoActive || !gpxRoute || gpxRoute.points.length < 2) return null;
+    const fix = position.fix;
+    if (fix.latitude === undefined || fix.longitude === undefined) return null;
+    const pos = { lat: fix.latitude, lng: fix.longitude };
+    const off = isOffTrack(pos, gpxRoute.points, campus.settings.offRouteMeters);
+    const remaining = remainingOnTrack(pos, gpxRoute.points, nameOf(destId));
+    const walked = gpxRoute.distanceMeters - remaining.remainingMeters;
+    const nextStep = gpxRoute.steps.find((s) => s.atMeters > walked + 1) ?? null;
+    return { off, remaining, nextStep };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geoActive, gpxRoute, position.fix, destId, campus.settings.offRouteMeters]);
 
   function clearQrParams() {
     const next = new URLSearchParams(params);
@@ -166,94 +202,73 @@ export function NavigatePage() {
     setParams(next, { replace: true });
   }
 
-  // Stable tap handler so the map doesn't re-render on every GPS tick.
   const handleMapTap = useCallback(
-    (x: number, y: number) => {
+    (lat: number, lng: number) => {
       setDemoOrigin(null);
-      position.applyManual(x, y, campus.settings.maxSnapMeters);
+      const f = position.applyManualGeo(lat, lng);
+      if (f.locationId && f.confidence !== 'low' && toDraft) {
+        journey.requestRoute(f.locationId, toDraft);
+      }
       setTapMode(false);
     },
-    [position, campus.settings.maxSnapMeters],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [position, toDraft],
   );
+
+  function fitGpx() {
+    const map = mapRef.current;
+    const pts = gpxRoute?.points ?? [];
+    if (!map || pts.length === 0) return;
+    map.flyToBounds(
+      L.latLngBounds(pts.map((p) => [p.lat, p.lng] as [number, number])).pad(0.2),
+      { duration: 0.6 },
+    );
+  }
 
   function recenter() {
     const map = mapRef.current;
     if (!map) return;
     const f = position.fix;
-    if (f.mapX !== undefined && f.mapY !== undefined) {
-      map.flyTo(toLatLng(f.mapX, f.mapY) as L.LatLngExpression, 1.5, { duration: 0.6 });
-    } else if (journey.currentLocationId) {
-      const loc = campus.locations.find((l) => l.id === journey.currentLocationId);
-      if (loc) map.flyTo(toLatLng(loc.mapX, loc.mapY) as L.LatLngExpression, 1, { duration: 0.6 });
-    } else {
-      map.flyToBounds(
-        [
-          [0, 0],
-          [1000, 1000],
-        ],
-        { duration: 0.6 },
-      );
+    if (f.latitude !== undefined && f.longitude !== undefined) {
+      map.flyTo([f.latitude, f.longitude], 17, { duration: 0.6 });
+    } else if (originId) {
+      const c = coords.get(originId);
+      if (c) map.flyTo([c.lat, c.lng], 17, { duration: 0.6 });
     }
   }
 
-  function fitRoute() {
-    const map = mapRef.current;
-    if (!map || routePoints.length === 0) return;
-    map.flyToBounds(L.latLngBounds(routePoints as L.LatLngExpression[]).pad(0.25), {
-      duration: 0.6,
-    });
-  }
-
-  // Auto-fit each new preview route so a computed route is always visible.
-  useEffect(() => {
-    if (navigation.active || !displayedRoute || displayedRoute.nodeIds.length < 2) return;
-    const key = displayedRoute.nodeIds.join('>');
-    if (fittedRouteKey.current === key) return;
-    fittedRouteKey.current = key;
-    fitRoute();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  });
-
-  // Dev diagnostics: log the full chain once per route outcome.
-  useEffect(() => {
-    if (!toDraft || navigation.active || displayedRoute === undefined) return;
-    const key = `dest=${toDraft}|route=${displayedRoute ? displayedRoute.nodeIds.join('>') : 'null'}`;
-    if (loggedRouteKey.current === key) return;
-    loggedRouteKey.current = key;
-    const nodeByLoc = new Map(
-      campus.graph.nodes.map((n) => [n.locationId ?? '', n.id]),
-    );
-    const srcLoc = journey.currentLocationId;
-    const dstLoc = journey.destinationId;
-    logRouteDebug({
-      sourceLocation: srcLoc,
-      sourceNode: srcLoc ? (nodeByLoc.get(srcLoc) ?? null) : null,
-      destinationLocation: dstLoc,
-      destinationNode: dstLoc ? (nodeByLoc.get(dstLoc) ?? null) : null,
-      nodeIds: displayedRoute ? displayedRoute.nodeIds : null,
-      routeCoords: displayedRoute ? routeToLatLngs(displayedRoute.nodeIds, campus.graph.nodes) : null,
-      distanceMeters: displayedRoute ? displayedRoute.totalDistanceMeters : null,
-      etaSeconds: displayedRoute ? displayedRoute.estimatedWalkingTimeSeconds : null,
-      routeError: displayedRoute ? null : 'findRoute returned null (no path)',
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  });
-
-  const hasRoute = !!displayedRoute && displayedRoute.nodeIds.length > 1;
-
   function startNavigation() {
-    if (!hasRoute || !displayedRoute) return;
-    navigation.start(displayedRoute);
+    if (!gpxRoute) return;
+    setGeoActive(true);
     position.startTracking();
   }
 
   function exitNavigation() {
-    navigation.stop();
+    setGeoActive(false);
     position.stopTracking();
   }
 
+  // Dev diagnostics for the GPX pipeline.
+  useEffect(() => {
+    if (!destId || gpxStatus === 'idle' || gpxStatus === 'loading') return;
+    logRouteDebug({
+      sourceLocation: originId,
+      sourceNode: originId,
+      destinationLocation: destId,
+      destinationNode: destId,
+      nodeIds: gpxRoute ? gpxRoute.points.map((_, i) => `trkpt:${i}`) : null,
+      routeCoords: null,
+      distanceMeters: gpxRoute ? gpxRoute.distanceMeters : null,
+      etaSeconds: gpxRoute ? gpxRoute.etaSeconds : null,
+      routeError: gpxStatus === 'error' ? (gpxError ?? 'GPX load failed') : null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gpxStatus]);
+
+  const qrLocationName = journey.qrLocationId ? nameOf(journey.qrLocationId) : null;
+
   return (
-    <div className="space-y-3">
+    <div className="relative flex h-[100dvh] flex-col overflow-hidden">
       {/* QR entry: ?location=MAIN_GATE auto-sets current location */}
       <QRScannerEntry
         validIds={validIds}
@@ -269,254 +284,315 @@ export function NavigatePage() {
         }}
       />
 
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h1 className="text-xl font-extrabold tracking-[-0.01em] text-ink-deep">Navigate</h1>
-        <PositionBadge fix={position.fix} />
-      </div>
-
-      {qrError ? <ErrorBanner message={qrError} /> : null}
-      {position.gpsError ? <ErrorBanner message={position.gpsError} /> : null}
-      {position.fix.note && position.fix.source !== 'unknown' && position.fix.confidence === 'low' ? (
-        <ErrorBanner message={position.fix.note} tone="warn" />
-      ) : null}
-      {qrLocationName ? (
-        <YouAreHereBanner
-          locationName={qrLocationName}
-          onClear={() => {
-            journey.applyQrLocation(null);
-            position.clear();
-            clearQrParams();
-          }}
-        />
-      ) : null}
-      {demoOrigin && !journey.qrLocationId ? (
-        <p role="status" className="border border-amber-700/25 bg-amber-50 px-3 py-2 text-[13px] font-semibold text-amber-900">
-          Demo location: Main Gate — GPS unavailable, showing the demo route.
-        </p>
-      ) : null}
-
-      {/* HERO MAP with floating search + controls */}
-      <div className="relative">
-        <CampusMap
-          locations={campus.locations}
-          graph={campus.graph}
-          features={campus.features}
-          routeNodeIds={routeNodeIds}
-          currentLocationId={journey.currentLocationId}
-          destinationId={journey.destinationId}
-          positionFix={position.fix.source === 'unknown' ? null : position.fix}
-          mapTapEnabled={tapMode}
-          onMapTap={handleMapTap}
-          mapRef={mapRef}
-          heightClass="h-[62vh] min-h-[380px] lg:h-[68vh]"
-          showDemoBadge={campus.datasetInfo.isDemo}
-        />
-
-        {/* Floating search */}
-        <div className="absolute left-2.5 right-16 top-2.5 z-[500] sm:right-auto sm:w-[360px]">
-          <div className="rounded-control bg-white/95 p-1.5 shadow ring-1 ring-ink-deep/10 backdrop-blur">
+      {!toDraft && !destId ? (
+        /* Idle: destination picker (map appears once a destination is set) */
+        <div className="flex flex-1 flex-col bg-paper px-4 pb-8 pt-20">
+          <p className="font-mono text-[11px] font-bold tracking-[0.14em] text-brand-ink">
+            MIET · SMART CAMPUS NAVIGATOR
+          </p>
+          <h1 className="mt-2 text-[28px] font-extrabold leading-tight tracking-[-0.02em] text-ink-deep">
+            Where do you want to go?
+          </h1>
+          <div className="mt-4">
             <DestinationSearch
-              onPick={(loc) => setToDraft(loc.id)}
+              onPick={(loc) => pickDestination(loc.id)}
               compact
               locations={campus.locations}
             />
           </div>
-          {tapMode ? (
-            <p className="mt-2 inline-block bg-ink-deep/90 px-2.5 py-1 font-mono text-[11px] font-bold tracking-wide text-white">
-              TAP MAP TO SET POSITION…
-            </p>
+          <div className="mt-4 flex flex-wrap gap-1.5" role="list" aria-label="Quick destinations">
+            {campus.locations
+              .filter((l) => l.type !== 'entrance')
+              .map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  role="listitem"
+                  onClick={() => pickDestination(l.id)}
+                  className="rounded-control border border-ink-deep/15 bg-white px-4 py-2.5 font-mono text-xs font-bold tracking-wider text-ink-deep transition-colors duration-150 hover:border-brand/50 hover:text-brand-ink"
+                >
+                  {l.name.toUpperCase()}
+                </button>
+              ))}
+          </div>
+          {journey.recent.length > 0 ? (
+            <div className="mt-4 flex flex-wrap items-center gap-1.5">
+              <span className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">RECENT</span>
+              {journey.recent.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => pickDestination(id)}
+                  className="rounded-control px-2 py-1 font-mono text-[11px] text-ink-soft hover:bg-white hover:text-ink-deep"
+                >
+                  {nameOf(id)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {qrError ? (
+            <div className="mt-4">
+              <ErrorBanner message={qrError} />
+            </div>
           ) : null}
         </div>
-
-        <MapControls
-          fix={position.fix}
-          hasRoute={hasRoute}
-          tracking={position.tracking}
-          onLocate={() => void position.locateOnce()}
-          onRecenter={recenter}
-          onFitRoute={fitRoute}
-        />
-      </div>
-
-      {/* BOTTOM SHEET */}
-      <section aria-live="polite" aria-label="Route results">
-        {navigation.active && navigation.sessionRoute ? (
-          <div className="border-y-2 border-ink-deep py-3">
-            {navigation.offRoute ? (
-              <ErrorBanner message="You appear to be off route." />
-            ) : navigation.info ? (
-              <p className="flex items-center gap-2.5 text-[15px] font-bold text-ink-deep">
-                <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center bg-brand text-base text-white">→</span>
-                {navigation.info.nextInstruction}
-              </p>
-            ) : (
-              <p className="text-sm text-ink-soft">Waiting for your live position…</p>
-            )}
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              {navigation.info ? (
-                <p className="font-mono text-xs tracking-wide text-ink-soft">
-                  <strong className="text-ink-deep">{committedToName.toUpperCase()}</strong> ·{' '}
-                  {formatDistance(navigation.info.remainingMeters)} ·{' '}
-                  {formatWalkingTime(navigation.info.remainingSeconds)} LEFT
+      ) : (
+        /* Full-screen route view */
+        <div className="relative min-h-0 flex-1">
+          {gpxRoute && originLoc && destLoc ? (
+            <GpxRouteMap
+              points={gpxRoute.points}
+              origin={{
+                position: { lat: originLoc.latitude ?? 0, lng: originLoc.longitude ?? 0 },
+                label: originLoc.name,
+                sub: 'Start',
+              }}
+              destination={{
+                position: { lat: destLoc.latitude ?? 0, lng: destLoc.longitude ?? 0 },
+                label: destLoc.name,
+                sub: destLoc.category,
+              }}
+              userFix={position.fix.source === 'unknown' ? null : position.fix}
+              mapRef={mapRef}
+              heightClass="h-full"
+              mapTapEnabled={tapMode}
+              onMapTap={handleMapTap}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center bg-paper px-6 text-center">
+              {gpxStatus === 'error' ? (
+                <div className="max-w-sm space-y-3">
+                  <ErrorBanner message={gpxError ?? 'The walking route could not be loaded.'} />
+                  <div className="flex justify-center gap-2">
+                    <Button type="button" variant="secondary" onClick={() => void reloadGpx()}>
+                      Try again
+                    </Button>
+                    <Button type="button" variant="secondary" onClick={() => pickDestination(null)}>
+                      New search
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <p role="status" className="font-mono text-xs tracking-[0.12em] text-ink-soft">
+                  {locating ? 'FINDING YOUR LOCATION…' : 'LOADING WALKING ROUTE…'}
                 </p>
-              ) : null}
-              <span className="ml-auto flex gap-2">
-                {navigation.offRoute && position.fix.nodeId ? (
-                  <Button
-                    type="button"
-                    onClick={() => navigation.recalculate(position.fix)}
-                  >
-                    Recalculate
-                  </Button>
-                ) : null}
-                <Button type="button" variant="secondary" onClick={exitNavigation}>
-                  Exit
-                </Button>
-              </span>
+              )}
             </div>
-            {!position.fix.nodeId ? (
-              <p className="mt-2 text-xs text-ink-soft">
-                Live position unavailable — recalculation needs a snapped position (QR, GPS near a path, or tap-to-set).
+          )}
+
+          {/* Floating search */}
+          <div className="absolute left-2.5 right-2.5 top-[4.25rem] z-[500] sm:left-auto sm:w-[360px] sm:right-16">
+            <div className="rounded-control bg-white/95 p-1.5 shadow ring-1 ring-ink-deep/10 backdrop-blur">
+              <DestinationSearch
+                onPick={(loc) => pickDestination(loc.id)}
+                compact
+                locations={campus.locations}
+              />
+            </div>
+            {tapMode ? (
+              <p className="mt-2 inline-block bg-ink-deep/90 px-2.5 py-1 font-mono text-[11px] font-bold tracking-wide text-white">
+                TAP MAP TO SET POSITION…
               </p>
             ) : null}
           </div>
-        ) : displayedRoute === undefined ? (
-          <div className="border-t border-ink-deep/10 pt-3">
-            <p className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">
-              {locating ? 'FINDING YOUR LOCATION…' : 'WHERE TO?'}
-            </p>
-            {/* Quick destinations from campus data (entrances are origins, not goals) */}
-            <div className="mt-2 flex flex-wrap gap-1.5" role="list" aria-label="Quick destinations">
-              {campus.locations
-                .filter((l) => l.type !== 'entrance')
-                .map((l) => (
-                  <button
-                    key={l.id}
-                    type="button"
-                    role="listitem"
-                    onClick={() => setToDraft(l.id)}
-                    aria-pressed={toDraft === l.id}
-                    className={`rounded-control border px-3 py-1.5 font-mono text-[11px] font-bold tracking-wider transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-dark ${
-                      toDraft === l.id
-                        ? 'border-brand bg-brand text-white'
-                        : 'border-ink-deep/15 bg-white text-ink-soft hover:border-brand/50 hover:text-brand-ink'
-                    }`}
-                  >
-                    {l.name.toUpperCase()}
-                  </button>
-                ))}
-            </div>
-            {locating ? (
-              <p className="mt-3 text-[13px] text-ink-soft" role="status">
-                Finding your location… route calculates automatically once you&apos;re located.
+
+          {/* Status strips */}
+          <div className="absolute left-2.5 right-2.5 top-[8.25rem] z-[500] space-y-2 sm:left-auto sm:w-[360px] sm:right-16">
+            {qrError ? <ErrorBanner message={qrError} /> : null}
+            {position.gpsError ? <ErrorBanner message={position.gpsError} /> : null}
+            {qrLocationName ? (
+              <YouAreHereBanner
+                locationName={qrLocationName}
+                onClear={() => {
+                  journey.applyQrLocation(null);
+                  position.clear();
+                  clearQrParams();
+                }}
+              />
+            ) : null}
+            {demoOrigin && !journey.qrLocationId ? (
+              <p role="status" className="border border-amber-700/25 bg-amber-50/95 px-3 py-2 text-[13px] font-semibold text-amber-900">
+                Demo starting location · Main Gate
               </p>
             ) : null}
-            {locateFailed && toDraft ? (
-              <div className="mt-3 border border-ink-deep/10 bg-white p-3">
-                <p className="text-sm font-bold text-ink-deep">Couldn&apos;t determine your location.</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => {
-                      failedFor.current = null;
-                      setLocateFailed(false);
-                      setLocating(true);
-                      void position.locateOnce();
-                    }}
-                  >
-                    Try GPS again
+            <PositionBadge fix={position.fix} />
+          </div>
+
+          {gpxRoute ? (
+            <MapControls
+              fix={position.fix}
+              hasRoute
+              tracking={position.tracking}
+              onLocate={() => void position.locateOnce()}
+              onRecenter={recenter}
+              onFitRoute={fitGpx}
+            />
+          ) : null}
+
+          {/* Bottom sheet */}
+          <section
+            aria-live="polite"
+            aria-label="Route results"
+            className="absolute inset-x-2.5 bottom-2.5 z-[500] sm:left-3 sm:right-auto sm:w-[380px] sm:bottom-3"
+          >
+            {geoActive && gpxRoute ? (
+              <div className="rounded-control bg-white/95 p-3 shadow ring-1 ring-ink-deep/10 backdrop-blur">
+                {geoInfo?.off ? (
+                  <ErrorBanner message="You appear to be off route." />
+                ) : geoInfo ? (
+                  <p className="flex items-center gap-2.5 text-[15px] font-bold text-ink-deep">
+                    <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center bg-brand text-base text-white">→</span>
+                    {geoInfo.nextStep ? geoInfo.nextStep.text : geoInfo.remaining.nextInstruction}
+                  </p>
+                ) : (
+                  <p className="text-sm text-ink-soft">Waiting for your live position…</p>
+                )}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {geoInfo ? (
+                    <p className="font-mono text-xs tracking-wide text-ink-soft">
+                      <strong className="text-ink-deep">{nameOf(destId).toUpperCase()}</strong> ·{' '}
+                      {formatDistance(geoInfo.remaining.remainingMeters)} ·{' '}
+                      {formatWalkingTime(
+                        geoInfo.remaining.remainingMeters / 1.4,
+                      )}{' '}
+                      LEFT
+                    </p>
+                  ) : null}
+                  <span className="ml-auto flex gap-2">
+                    {geoInfo?.off ? (
+                      <Button type="button" onClick={fitGpx}>
+                        Recalculate
+                      </Button>
+                    ) : null}
+                    <Button type="button" variant="secondary" onClick={exitNavigation}>
+                      Exit
+                    </Button>
+                  </span>
+                </div>
+              </div>
+            ) : gpxRoute && originLoc && destLoc ? (
+              <div className="rounded-control bg-white/95 p-3 shadow ring-1 ring-ink-deep/10 backdrop-blur">
+                <p className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">
+                  {originLoc.name.toUpperCase()} → {destLoc.name.toUpperCase()}
+                </p>
+                <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-ink-deep">
+                  {formatDistance(gpxRoute.distanceMeters)}
+                  <span className="ml-2 align-middle font-sans text-[13px] font-semibold text-ink-soft">
+                    {formatWalkingTime(gpxRoute.etaSeconds)} walk
+                  </span>
+                </p>
+                <p className="mt-1 font-mono text-[10px] tracking-[0.08em] text-ink-soft">
+                  REAL GPS TRACK · WALKED &amp; RECORDED ON CAMPUS
+                </p>
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  <Button type="button" onClick={startNavigation} className="flex-1">
+                    <Navigation className="h-4 w-4" aria-hidden="true" />
+                    Start Navigation
                   </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => setTapMode((v) => !v)}
-                    aria-pressed={tapMode}
-                  >
-                    <Hand className="h-4 w-4" aria-hidden="true" />
-                    {tapMode ? 'Cancel tap' : 'Set Location Manually'}
+                  <Button type="button" variant="secondary" onClick={() => setShowDirections((v) => !v)} aria-expanded={showDirections}>
+                    Directions
+                    <ChevronDown
+                      className={`h-4 w-4 transition-transform duration-200 ${showDirections ? 'rotate-180' : ''}`}
+                      aria-hidden="true"
+                    />
                   </Button>
                 </div>
-                {tapMode ? (
-                  <p className="mt-2 text-xs text-ink-soft">Tap anywhere on the map to set your position.</p>
-                ) : (
-                  <p className="mt-2 text-xs text-ink-soft">
-                    Or scan a location QR code with your camera — it opens navigation with that spot confirmed.
-                  </p>
-                )}
+                {showDirections ? (
+                  <div className="mt-2 max-h-44 overflow-y-auto border-t border-ink-deep/10 pt-1">
+                    <DirectionsList directions={gpxRoute.steps.map((s) => s.text)} />
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-            {journey.recent.length > 0 ? (
-              <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                <span className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">RECENT</span>
-                {journey.recent.map((id) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setToDraft(id)}
-                    className="rounded-control px-2 py-1 font-mono text-[11px] text-ink-soft hover:bg-white hover:text-ink-deep"
-                  >
-                    {nameOf(id)}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : displayedRoute === null ? (
-          <div className="border-t border-ink-deep/10 pt-3">
-            <ErrorBanner message="No walking route is available between these locations." />
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => {
-                failedFor.current = null;
-                setLocateFailed(false);
-                if (journey.currentLocationId && toDraft) {
-                  journey.requestRoute(journey.currentLocationId, toDraft);
-                }
-              }}
-              className="mt-3"
-            >
-              Try again
-            </Button>
-          </div>
-        ) : displayedRoute.nodeIds.length <= 1 ? (
-          <EmptyState title="You are already at this location." />
-        ) : (
-          <div className="grid gap-4 border-t border-ink-deep/10 pt-3 lg:grid-cols-[300px_minmax(0,1fr)]">
-            <div className="space-y-3">
-              <RouteSummary
-                route={displayedRoute}
-                fromName={committedFromName}
-                toName={committedToName}
-              />
-              <p className="font-mono text-[10px] tracking-[0.08em] text-ink-soft">
-                DEMO ROUTE — WALKING PATH WILL BE UPDATED AFTER CAMPUS SURVEY
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={startNavigation}>
-                  <Navigation className="h-4 w-4" aria-hidden="true" />
-                  Start navigation
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => journey.setDestinationId(null)}
-                >
+            ) : samePlace ? (
+              <div className="rounded-control bg-white/95 p-3 shadow ring-1 ring-ink-deep/10 backdrop-blur">
+                <p className="text-sm font-bold text-ink-deep">You are already at this location.</p>
+                <Button type="button" variant="secondary" onClick={() => pickDestination(null)} className="mt-2">
                   New search
                 </Button>
               </div>
-              <Button type="button" variant="ghost" onClick={fitRoute} className="px-0">
-                Fit route on map →
-              </Button>
-            </div>
-            <div className="lg:border-l lg:border-ink-deep/10 lg:pl-4">
-              <h2 className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">DIRECTIONS</h2>
-              <DirectionsList directions={displayedRoute.directions} />
-            </div>
-          </div>
-        )}
-      </section>
+            ) : (
+              <div className="rounded-control bg-white/95 p-3 shadow ring-1 ring-ink-deep/10 backdrop-blur">
+                {originId && destId && !gpxSourcesFor(originId, destId) ? (
+                  <p className="text-sm font-bold text-ink-deep">
+                    No walking route is available between these locations.
+                  </p>
+                ) : locateFailed ? (
+                  <>
+                    <p className="text-sm font-bold text-ink-deep">Couldn&apos;t determine your location.</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          failedFor.current = null;
+                          setLocateFailed(false);
+                          setLocating(true);
+                          void position.locateOnce();
+                        }}
+                      >
+                        Try GPS again
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => setTapMode((v) => !v)}
+                        aria-pressed={tapMode}
+                      >
+                        <Hand className="h-4 w-4" aria-hidden="true" />
+                        {tapMode ? 'Cancel tap' : 'Set Location Manually'}
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-xs text-ink-soft">
+                      Or scan a location QR code with your camera — it opens navigation with that spot confirmed.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">
+                      {locating ? 'FINDING YOUR LOCATION…' : 'WHERE TO?'}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5" role="list" aria-label="Quick destinations">
+                      {campus.locations
+                        .filter((l) => l.type !== 'entrance')
+                        .map((l) => (
+                          <button
+                            key={l.id}
+                            type="button"
+                            role="listitem"
+                            onClick={() => pickDestination(l.id)}
+                            aria-pressed={toDraft === l.id}
+                            className={`rounded-control border px-3 py-1.5 font-mono text-[11px] font-bold tracking-wider transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-dark ${
+                              toDraft === l.id
+                                ? 'border-brand bg-brand text-white'
+                                : 'border-ink-deep/15 bg-white text-ink-soft hover:border-brand/50 hover:text-brand-ink'
+                            }`}
+                          >
+                            {l.name.toUpperCase()}
+                          </button>
+                        ))}
+                    </div>
+                    {journey.recent.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono text-[11px] font-bold tracking-[0.12em] text-ink-soft">RECENT</span>
+                        {journey.recent.map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => pickDestination(id)}
+                            className="rounded-control px-2 py-1 font-mono text-[11px] text-ink-soft hover:bg-white hover:text-ink-deep"
+                          >
+                            {nameOf(id)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
